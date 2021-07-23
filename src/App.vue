@@ -131,7 +131,11 @@
 				realY: 0,
 				zoom: 1,
 				height: 0,
-				imgUpload: false
+				imgUpload: false,
+				//是否拖动
+				panning: false,
+				//选中的元素
+				actives: []
 			};
 		},
 		watch: {
@@ -162,7 +166,7 @@
 			defectConfirm() {
 				this.dialogVisible = false
 				//获取所有选中的元素
-				let actives = this.canvas.getActiveObjects();
+				let actives = this.getActives()
 				for (var i = 0; i < actives.length; i++) {
 					let item = actives[i]
 					let centerWith = this.canvas.width / 2
@@ -246,7 +250,10 @@
 						left: left,
 						top: top,
 						fontSize: 20,
-						fill: '#aa00ff'
+						fill: '#aa00ff',
+						lockMovementX: true,
+						lockMovementY: true,
+						selectable: false,
 					});
 					//删除旧的标注
 					let oldText = item.mytext;
@@ -286,6 +293,7 @@
 			},
 			outPut() {
 				let items = this.canvas.getObjects()
+				console.log(items)
 				if (!items || items.length === 0) {
 					this.$message.error('请先进行标注！');
 					return;
@@ -296,7 +304,7 @@
 				let defectJudges = ''
 				for (let index in items) {
 					let item = items[index];
-					if (item.points && item.points.length > 0) {
+					if (item.mytype === 'polygon') {
 						if (!item.mytext || !item.defectCode || !item.defectJudge) {
 							this.$message.error('部分标注未指定缺陷类型！');
 							return;
@@ -325,8 +333,8 @@
 				console.log(defectJudges)
 			},
 			hideResult() {
-				this.canvas.getObjects().forEach(item=>{
-					if(item.class!='img'){
+				this.canvas.getObjects().forEach(item => {
+					if (item.mytype != 'img') {
 						this.canvas.remove(item)
 					}
 				});
@@ -337,14 +345,16 @@
 				this.defectCodes = ''
 				this.defectJudges = ''
 			},
-			resetResult(){
-				this.canvas.zoomToPoint({x:this.realX,y:this.realY},1);
+			resetResult() {
+				this.canvas.zoomToPoint({
+					x: this.realX,
+					y: this.realY
+				}, 1);
 				let delta = new fabric.Point(-this.realX, -this.realY);
 				this.canvas.relativePan(delta);
 				this.zoom = 1
 				this.realX = 0
 				this.realY = 0
-				this.height = this.canvas.height
 			},
 			showResult() {
 				this.hideResult()
@@ -390,9 +400,18 @@
 						left: textPoint[0],
 						top: textPoint[1],
 						fontSize: 20,
-						fill: '#aa00ff'
+						fill: '#aa00ff',
+						lockMovementX: true,
+						lockMovementY: true,
+						selectable: false,
 					});
 					this.canvas.add(text);
+					polygon.mytype = 'polygon'
+					polygon.mytext = text
+					//标注所在点
+					polygon.textPoint = [textPoint[0], textPoint[1]]
+					polygon.defectCode = codeArray[i]
+					polygon.defectJudge = judgeArray[i]
 				}
 			},
 			saveFile(data, filename) {
@@ -445,8 +464,7 @@
 					//按宽缩放
 					let canvasWidth = this.canvas.width
 					let rate = canvasWidth / imgWidth
-					this.height = imgHeight * rate
-					this.canvas.setHeight(this.height)
+					this.canvas.setHeight(imgHeight * rate)
 					//修改画布的高度
 					var imgInstance = new fabric.Image(imgElement, {
 						zIndex: -1,
@@ -454,7 +472,7 @@
 						scaleX: rate,
 						scaleY: rate,
 					});
-					imgInstance.class = 'img'
+					imgInstance.mytype = 'img'
 					this.canvas.add(imgInstance);
 					this.imgUpload = true
 				};
@@ -471,7 +489,7 @@
 				}
 			},
 			mousedblclick(e) {
-				let actives = this.canvas.getActiveObjects()
+				let actives = this.getActives()
 				if (actives && actives.length > 0) {
 					//判断标注类型是否相同
 					let defectCode;
@@ -493,8 +511,31 @@
 					this.dialogVisible = true;
 				}
 			},
+			mousedownbefore(e) {
+				if (e.e.ctrlKey) {
+					//按住ctrl时记录上次选中的元素
+					this.actives = this.getActives()
+				} else {
+					this.actives = []
+				}
+			},
+			//选择分组时设置为不可移动
+			selectioncreated(e) {
+				this.getActives().forEach(item => {
+					if (item.group) {
+						item.group.hasControls = false
+						item.group.lockMovementX = true
+						item.group.lockMovementY = true
+					}
+				})
+			},
 			// 鼠标按下时触发
 			mousedown(e) {
+				//按住alt键才可拖动画布
+				if (e.e.altKey) {
+					this.panning = true;
+					this.canvas.selection = false
+				}
 				// 记录鼠标按下时的坐标
 				var xy = e.pointer || this.transformMouse(e.e.offsetX, e.e.offsetY);
 				this.mouseFrom.x = xy.x;
@@ -518,7 +559,7 @@
 					if (e.pointer.x < this.realX ||
 						e.pointer.x > this.realX + this.canvas.width * this.zoom ||
 						e.pointer.y < this.realY ||
-						e.pointer.y > this.realY + this.canvas.width * this.zoom) {
+						e.pointer.y > this.realY + this.canvas.height * this.zoom) {
 						this.$message.error("请勿标注在图片外！")
 						return;
 					}
@@ -538,9 +579,36 @@
 						console.log(error);
 					}
 				}
+
+				if (e.e.ctrlKey) {
+					//按住ctrl时重新选中元素
+					let actives = this.getActives();
+					let ids = this.actives.map(item=>item.id);
+					actives.forEach(item => {
+						if(ids.indexOf(item.id)===-1){
+							this.actives.push(item)
+						}
+					})
+					this.mulSelect(this.actives)
+				}
+			},
+			//多选
+			mulSelect(items) {
+				this.canvas.discardActiveObject();
+				var sel = new fabric.ActiveSelection(items, {
+					canvas: this.canvas,
+				});
+				this.canvas.setActiveObject(sel);
+				this.canvas.requestRenderAll();
+			},
+			//获取选中的元素
+			getActives() {
+				return this.canvas.getActiveObjects();
 			},
 			// 鼠标松开执行
 			mouseup(e) {
+				this.panning = false;
+				this.canvas.selection = true
 				var xy = e.pointer || this.transformMouse(e.e.offsetX, e.e.offsetY);
 				this.mouseTo.x = xy.x;
 				this.mouseTo.y = xy.y;
@@ -553,6 +621,12 @@
 
 			//鼠标移动过程中已经完成了绘制
 			mousemove(e) {
+				if (this.panning && e && e.e) {
+					var delta = new fabric.Point(e.e.movementX, e.e.movementY);
+					this.canvas.relativePan(delta);
+					this.realX += e.e.movementX
+					this.realY += e.e.movementY
+				}
 				if (this.moveCount % 2 && !this.doDrawing) {
 					//减少绘制频率
 					return;
@@ -572,16 +646,6 @@
 							x2: pointer.x,
 							y2: pointer.y
 						});
-
-						// var points = this.activeShape.get("points");
-						// points[this.pointArray.length] = {
-						//   x: pointer.x,
-						//   y: pointer.y,
-						//   zIndex: 1
-						// };
-						// this.activeShape.set({
-						//   points: points
-						// });
 						this.canvas.renderAll();
 					}
 					this.canvas.renderAll();
@@ -590,9 +654,11 @@
 			//鼠标滚轮事件
 			mousewheel(e) {
 				let move = (e.e.deltaY > 0 ? -0.1 : 0.1)
+				if (move < 0 && this.canvas.getZoom() < 0.1 || move > 0 && this.canvas.getZoom() > 10) {
+					//缩放限制10倍
+					return
+				}
 				let zoom = (move + 1) * this.canvas.getZoom();
-				zoom = Math.max(0.1, zoom); //最小为原来的1/10
-				zoom = Math.min(10, zoom); //最大是原来的10倍
 				this.canvas.zoomToPoint(e.pointer, zoom);
 				//实时计算图像左上角的位置
 				this.realX -= move * (e.pointer.x - this.realX)
@@ -605,7 +671,7 @@
 				// resetCanvas();
 			},
 			deleteObj() {
-				this.canvas.getActiveObjects().map(item => {
+				this.getActives().map(item => {
 					this.canvas.remove(item);
 				});
 			},
@@ -682,10 +748,10 @@
 					}
 				}
 				let points = [
-					((e.pointer.x || e.e.layerX)  - this.realX)/ this.canvas.getZoom(),
-					((e.pointer.y || e.e.layerY)  - this.realY)/ this.canvas.getZoom(),
-					((e.pointer.x || e.e.layerX)  - this.realX)/ this.canvas.getZoom(),
-					((e.pointer.y || e.e.layerY)  - this.realY)/ this.canvas.getZoom()
+					((e.pointer.x || e.e.layerX) - this.realX) / this.canvas.getZoom(),
+					((e.pointer.y || e.e.layerY) - this.realY) / this.canvas.getZoom(),
+					((e.pointer.x || e.e.layerX) - this.realX) / this.canvas.getZoom(),
+					((e.pointer.y || e.e.layerY) - this.realY) / this.canvas.getZoom()
 				];
 				//创建线
 				this.line = new fabric.Line(points, {
@@ -701,52 +767,6 @@
 					evented: false,
 					objectCaching: false
 				});
-				// if (this.activeShape) {//activeShape会自动存上一个polygon的对象。不是第一个点（白点）走这
-				//     let pos = this.canvas.getPointer(e.e);
-				//     let points = this.activeShape.get("points");
-				//   points.push({
-				//     x: pos.x,
-				//     y: pos.y
-				//   });
-				//     let polygon = new fabric.Polygon(points, {
-				//     stroke: "#333333",
-				//     strokeWidth: 1,
-				//     fill: "#cccccc",
-				//     opacity: 0.3,
-				//     class: "polygonWhite",
-				//     selectable: false,
-				//     hasBorders: false,
-				//     hasControls: false,
-				//     evented: false,
-				//     objectCaching: false
-				//   });
-				//   this.canvas.remove(this.activeShape);
-				//   this.canvas.add(polygon);
-				//   this.activeShape = polygon;
-				//     // console.log('activeShape:',this.activeShape)
-				//   this.canvas.renderAll();
-				// } else {//第一个点（红点）走这
-				//     let polyPoint = [
-				//     {
-				//       x: (e.pointer.x || e.e.layerX) / this.canvas.getZoom(),
-				//       y: (e.pointer.y || e.e.layerY) / this.canvas.getZoom()
-				//     }
-				//   ];
-				//   let polygon = new fabric.Polygon(polyPoint, {
-				//     stroke: "#333333",
-				//     strokeWidth: 1,
-				//     fill: "#cccccc",
-				//     opacity: 0.3,
-				//     class: "polygonRed",
-				//     selectable: false,
-				//     hasBorders: false,
-				//     hasControls: false,
-				//     evented: false,
-				//     objectCaching: false
-				//   });
-				//   this.activeShape = polygon;
-				//   this.canvas.add(polygon);
-				// }
 				this.activeLine = this.line;
 
 				this.pointArray.push(circle);
@@ -778,6 +798,9 @@
 					lockMovementX: true,
 					lockMovementY: true
 				});
+				let id = new Date().getTime() + Math.floor(Math.random() * 10000);
+				polygon.id  = id
+				polygon.mytype = 'polygon'
 				this.canvas.add(polygon);
 
 				this.activeLine = null;
@@ -949,7 +972,6 @@
 				}
 
 				if (canvasObject) {
-					// canvasObject.index = getCanvasObjectIndex();\
 					this.canvas.add(canvasObject); //.setActiveObject(canvasObject)
 					this.drawingObject = canvasObject;
 				}
@@ -957,29 +979,20 @@
 		},
 		mounted() {
 			this.canvas = new fabric.Canvas("canvas", {
-				// skipTargetFind: false, //当为真时，跳过目标检测。目标检测将返回始终未定义。点击选择将无效
-				// selectable: false,  //为false时，不能选择对象进行修改
-				// selection: false   // 是否可以多个对象为一组
+				defaultCursor: 'pointer', //默认光标改成十字
+				hoverCursor: 'pointer', //默认光标改成十字
+				selectionColor: "rgba(0,0,0,0.05)",
+				selection: true,
+				preserveObjectStacking: false
 			});
-			this.canvas.defaultCursor = 'crosshair'; //默认光标改成十字
-			this.canvas.hoverCursor = 'pointer'; //悬浮光标改成手型
-			this.canvas.selectionColor = "rgba(0,0,0,0.05)";
+			this.canvas.on("selection:created", this.selectioncreated);
 			this.canvas.on("mouse:down", this.mousedown);
+			this.canvas.on("mouse:down:before", this.mousedownbefore);
 			this.canvas.on("mouse:dblclick", this.mousedblclick);
 			this.canvas.on("mouse:move", this.mousemove);
 			this.canvas.on("mouse:up", this.mouseup);
 			this.canvas.on("mouse:wheel", this.mousewheel);
-			// document.onmousedown = e => {
-			// 	if(e.button===2){
-			// 		//右击
-			// 	}else if(e.button===0){
-			// 		//左击
-			// 		let items = this.canvas.getActiveObjects();
-			// 		if(items){
-			// 			console.log(items)
-			// 		}
-			// 	}
-			// }
+
 			document.onkeydown = e => {
 				// 键盘 delect删除所选元素
 				if (e.keyCode == 46) {
@@ -999,9 +1012,6 @@
 						this.canvas.remove( //去掉当前最后的line
 							this.canvas.getObjects()[this.canvas.getObjects().length - 1]
 						);
-						// this.canvas.remove(//去掉当前最后的polygonWhite
-						//     this.canvas.getObjects()[this.canvas.getObjects().length - 1]
-						// );
 						this.canvas.remove( //去掉当前最后的line
 							this.canvas.getObjects()[this.canvas.getObjects().length - 1]
 						);
@@ -1013,72 +1023,11 @@
 							this.canvas.getObjects()[this.canvas.getObjects().length - 1]
 						);
 					}
-
-					// let firstZ=true
-					// for(let i=0;i<this.canvas.getObjects().length;i++){
-					//     let classList=this.canvas.getObjects()[i].class
-					//     firstZ = !classList.indexOf('polygonWhite');
-					// }
-					// if (firstZ) {//首次撤销删四个
-					//     console.log(111)
-					//     //去掉canvas.getObjects中的最后4项：line、circle、polygonWhite、line
-					//     this.canvas.remove(//去掉最后的line
-					//         this.canvas.getObjects()[this.canvas.getObjects().length - 1]
-					//     );
-					//     this.canvas.remove(//去掉当前最后的line
-					//         this.canvas.getObjects()[this.canvas.getObjects().length - 1]
-					//     );
-					//     // this.canvas.remove(//去掉当前最后的polygonWhite
-					//     //     this.canvas.getObjects()[this.canvas.getObjects().length - 1]
-					//     // );
-					//     this.canvas.remove(//去掉当前最后的line
-					//         this.canvas.getObjects()[this.canvas.getObjects().length - 1]
-					//     );
-					// }else {//否则删两个
-					//
-					//     this.canvas.remove(//去掉最后的line
-					//         this.canvas.getObjects()[this.canvas.getObjects().length - 1]
-					//     );
-					//     this.canvas.remove(//去掉当前最后的line
-					//         this.canvas.getObjects()[this.canvas.getObjects().length - 1]
-					//     );
-					// }
-
-
 					//去掉pointArray和lineArray数组中的最后一项
 					this.pointArray.splice(this.pointArray.length - 1, 1)
 					this.lineArray.splice(this.lineArray.length - 1, 1)
-
-
-					for (let j = 0; j < this.canvas.getObjects().length; j++) {
-						// console.log('后：' + j, this.canvas.getObjects()[j].class)
-					}
 				}
 			};
-			// var originalRender = fabric.Textbox.prototype._render;
-			// fabric.Textbox.prototype._render = function(ctx) {
-			//   originalRender.call(this, ctx);
-			//   //Don't draw border if it is active(selected/ editing mode)
-			//   if (this.active) return;
-			//   if(this.showTextBoxBorder){
-			//     var w = this.width,
-			//       h = this.height,
-			//       x = -this.width / 2,
-			//       y = -this.height / 2;
-			//     ctx.beginPath();
-			//     ctx.moveTo(x, y);
-			//     ctx.lineTo(x + w, y);
-			//     ctx.lineTo(x + w, y + h);
-			//     ctx.lineTo(x, y + h);
-			//     ctx.lineTo(x, y);
-			//     ctx.closePath();
-			//     var stroke = ctx.strokeStyle;
-			//     ctx.strokeStyle = this.textboxBorderColor;
-			//     ctx.stroke();
-			//     ctx.strokeStyle = stroke;
-			//   }
-			// }
-			// fabric.Textbox.prototype.cacheProperties = fabric.Textbox.prototype.cacheProperties.concat('active');
 		}
 	};
 </script>
