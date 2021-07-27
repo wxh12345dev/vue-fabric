@@ -47,7 +47,7 @@
 						<i class="draw-icon icon-save"></i>
 					</div>
 					<div style="margin-left: 5px;">
-						<el-button type="warning" size="mini" @click="outPut">保存结果</el-button>
+						<el-button type="warning" size="mini" @click="saveInfo">保存结果</el-button>
 					</div>
 					<div style="margin-left: 5px;">
 						<el-button type="primary" size="mini" @click="hideResult">隐藏结果</el-button>
@@ -119,8 +119,6 @@
 				imgFile: {},
 				imgSrc: "",
 				form: {},
-				//缺陷标注位置点
-				defectTextPoint: [],
 				//缺陷点
 				defectPoints: [],
 				//缺陷类型
@@ -250,7 +248,7 @@
 						left: left,
 						top: top,
 						fontSize: 20,
-						fill: '#aa00ff',
+						fill: '#ff0000',
 						lockMovementX: true,
 						lockMovementY: true,
 						selectable: false,
@@ -291,14 +289,13 @@
 				var filename = 'drawingboard_' + (new Date()).getTime() + '.' + 'png';
 				this.saveFile(imgData, filename);
 			},
-			outPut() {
+			saveInfo() {
 				let items = this.canvas.getObjects()
 				console.log(items)
 				if (!items || items.length === 0) {
 					this.$message.error('请先进行标注！');
 					return;
 				}
-				let defectTextPoint = []
 				let defectPoints = []
 				let defectCodes = ''
 				let defectJudges = ''
@@ -313,7 +310,6 @@
 						defectPoints.push(item.points.map(p => {
 							return [parseFloat(p.x.toFixed(3)), parseFloat(p.y.toFixed(3))]
 						}))
-						defectTextPoint.push(item.textPoint)
 						defectCodes += item.defectCode + ','
 						defectJudges += item.defectJudge + ','
 					}
@@ -327,54 +323,13 @@
 				this.defectPoints = defectPoints
 				this.defectCodes = defectCodes
 				this.defectJudges = defectJudges
-				this.defectTextPoint = defectTextPoint
-				console.log(defectPoints)
-				console.log(defectCodes)
-				console.log(defectJudges)
 			},
-			hideResult() {
-				this.canvas.getObjects().forEach(item => {
-					if (item.mytype != 'img') {
-						this.canvas.remove(item)
-					}
-				});
-			},
-			deleteResult() {
-				this.hideResult()
-				this.defectPoints = []
-				this.defectCodes = ''
-				this.defectJudges = ''
-			},
-			resetResult() {
-				this.canvas.zoomToPoint({
-					x: this.realX,
-					y: this.realY
-				}, 1);
-				let delta = new fabric.Point(-this.realX, -this.realY);
-				this.canvas.relativePan(delta);
-				this.zoom = 1
-				this.realX = 0
-				this.realY = 0
-			},
-			showResult() {
-				this.hideResult()
+			//重新画出图形
+			remake() {
 				let codeArray = this.defectCodes.split(',')
 				let judgeArray = this.defectJudges.split(',')
 				for (var i = 0; i < this.defectPoints.length; i++) {
 					let item = this.defectPoints[i];
-					// let pathStr;
-					// item.forEach(point => {
-					// 	if (!pathStr) {
-					// 		pathStr += "M "
-					// 	} else {
-					// 		pathStr += "L "
-					// 	}
-					// 	pathStr += point[0] + ' ' + point[1]
-					// })
-					// pathStr += " z"
-					// var path = new fabric.Path(pathStr);
-					// this.canvas.add(path);
-
 					var polygon = new fabric.Polygon(item.map(p => {
 						return {
 							x: p[0],
@@ -413,6 +368,46 @@
 					polygon.defectCode = codeArray[i]
 					polygon.defectJudge = judgeArray[i]
 				}
+			},
+			//显示隐藏
+			changeOpacity(type) {
+				let objs = this.canvas.getObjects();
+				for (let i = 0; i < objs.length; i++) {
+					let obj = objs[i];
+					//不隐藏背景图片
+					if (obj.mytype === 'img') {
+						continue;
+					}
+					obj.opacity = 1 - type
+				}
+				this.canvas.requestRenderAll()
+			},
+			hideResult() {
+				this.changeOpacity(1)
+			},
+			deleteResult() {
+				this.canvas.getObjects().forEach(item => {
+					if (item.mytype != 'img') {
+						this.canvas.remove(item)
+					}
+				});
+				this.defectPoints = []
+				this.defectCodes = ''
+				this.defectJudges = ''
+			},
+			resetResult() {
+				this.canvas.zoomToPoint({
+					x: this.realX,
+					y: this.realY
+				}, 1);
+				let delta = new fabric.Point(-this.realX, -this.realY);
+				this.canvas.relativePan(delta);
+				this.zoom = 1
+				this.realX = 0
+				this.realY = 0
+			},
+			showResult() {
+				this.changeOpacity(0)
 			},
 			saveFile(data, filename) {
 				var save_link = document.createElement('a');
@@ -583,9 +578,9 @@
 				if (e.e.ctrlKey) {
 					//按住ctrl时重新选中元素
 					let actives = this.getActives();
-					let ids = this.actives.map(item=>item.id);
+					let ids = this.actives.map(item => item.id);
 					actives.forEach(item => {
-						if(ids.indexOf(item.id)===-1){
+						if (ids.indexOf(item.id) === -1) {
 							this.actives.push(item)
 						}
 					})
@@ -799,7 +794,7 @@
 					lockMovementY: true
 				});
 				let id = new Date().getTime() + Math.floor(Math.random() * 10000);
-				polygon.id  = id
+				polygon.id = id
 				polygon.mytype = 'polygon'
 				this.canvas.add(polygon);
 

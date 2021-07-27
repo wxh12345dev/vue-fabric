@@ -9,7 +9,7 @@
 		name: 'novnc',
 		data() {
 			return {
-				url: 'ws://192.168.43.221:5901/websockify', //链接的url
+				url: 'ws://'+this.$route.query.ip+':5901/websockify', //链接的url
 				desktopName: '',
 				rfb: null
 			}
